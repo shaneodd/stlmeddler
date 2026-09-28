@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stlmeddler"
+version = "0.1.0"
+description = "STL/OBJ mesh processing tool"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [
+    { name = "Shane O", email = "94810508+shaneodd@users.noreply.github.com" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
+dependencies = [
+    "open3d",
+    "trimesh",
+    "PyQt5",
+    "PyOpenGL",
+    "numpy",
+    "shapely>=2.0.0",
+    "mapbox-earcut>=1.0.0",
+    "manifold3d>=0.5.0",
+    "networkx>=2.0",
+    "lxml>=4.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "."
+explicit_package_bases = true
+ignore_missing_imports = true
+files = ["src"]
+
+# Enforce full annotations on the pure-logic core; GUI modules stay lenient.
+[[tool.mypy.overrides]]
+module = ["src.mesh_ops", "src.gui.scene"]
+disallow_untyped_defs = true
+
+# Qt/OpenGL glue: PyQt5 ships incomplete stubs (e.g. Qt.LeftButton, Optional
+# menuBar()), so these thin view modules are not type-checked to avoid noise.
+[[tool.mypy.overrides]]
+module = ["src.gui.viewer", "src.gui.window", "src.gui.primitive_dialog"]
+ignore_errors = true

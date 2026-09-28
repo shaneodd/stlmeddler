@@ -1,0 +1,11 @@
+# Development / tooling dependencies (not required at runtime)
+# Install with: pip install -r requirements-dev.txt
+
+# Linting & formatting
+ruff>=0.6
+
+# Static type checking
+mypy>=1.11
+
+# Test coverage
+pytest-cov>=5.0

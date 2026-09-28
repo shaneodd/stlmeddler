@@ -1,0 +1,24 @@
+# Byte-compiled / optimized Python files
+__pycache__/
+*.pyc
+# Test / coverage caches
+.pytest_cache/
+.coverage
+htmlcov/
+# Virtual environments
+venv/
+test_venv/
+# Build artifacts
+build/
+*.egg-info/
+# PyInstaller output
+dist/
+# IDE/editor files
+.idea/
+*.swp
+# Local manual-test fixtures (kept on disk, not tracked)
+tests/fixtures/xyzCalibration_cube.stl
+coverage.xml
+
+# Sample meshes/images (local only, not tracked)
+/samples/
