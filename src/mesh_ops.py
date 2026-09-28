@@ -10,7 +10,7 @@ import contextlib
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
@@ -19,6 +19,17 @@ if TYPE_CHECKING:  # imported for static analysis only, never at runtime here
     import trimesh
 
     type TriangleMesh = "o3d.geometry.TriangleMesh"
+
+
+class MeshLike(Protocol):
+    """Minimal structural contract consumed by the boolean helpers.
+
+    Anything exposing ``.vertices`` / ``.triangles`` arrays (an Open3D
+    TriangleMesh, or a lightweight adapter) is a valid boolean operand.
+    """
+
+    vertices: Any
+    triangles: Any
 
 # Heavy third-party imports are loaded lazily via the _load_* helpers below so
 # importing this module stays cheap and optional dependencies stay optional.
@@ -103,7 +114,7 @@ def save_mesh(mesh: TriangleMesh, file_path: str) -> None:
     else:
         raise ValueError(f"Unsupported output format: {ext}")
 
-def boolean_difference(mesh_a: TriangleMesh, mesh_b: TriangleMesh) -> TriangleMesh:
+def boolean_difference(mesh_a: MeshLike, mesh_b: MeshLike) -> TriangleMesh:
     """Compute Boolean difference (mesh_a minus mesh_b) using trimesh.
     Returns a new Open3D TriangleMesh.
     """
@@ -117,7 +128,7 @@ def boolean_difference(mesh_a: TriangleMesh, mesh_b: TriangleMesh) -> TriangleMe
     new_mesh.triangles = o3d.utility.Vector3iVector(result.faces)
     return new_mesh
 
-def boolean_union(mesh_a: TriangleMesh, mesh_b: TriangleMesh) -> TriangleMesh:
+def boolean_union(mesh_a: MeshLike, mesh_b: MeshLike) -> TriangleMesh:
     """Compute Boolean union of two meshes using trimesh.
     Returns a new Open3D TriangleMesh.
     """
