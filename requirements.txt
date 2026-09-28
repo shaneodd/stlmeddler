@@ -10,6 +10,8 @@ PyOpenGL>=3.1.0
 
 # Numerical computing
 numpy>=1.24.0
+# Required by trimesh for slicing / connected-components (was transitively pulled by open3d<0.20)
+scipy>=1.10
 
 # Additional dependencies for trimesh and Open3D
 shapely>=2.0.0
