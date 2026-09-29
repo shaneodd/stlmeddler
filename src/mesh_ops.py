@@ -16,7 +16,6 @@ import numpy as np
 
 if TYPE_CHECKING:  # imported for static analysis only, never at runtime here
     import open3d as o3d
-    import trimesh
 
     type TriangleMesh = "o3d.geometry.TriangleMesh"
 
@@ -205,9 +204,13 @@ def cut_mesh_at_z(
 ) -> tuple[TriangleMesh | None, TriangleMesh | None]:
     """Cut a mesh horizontally at the given Z height.
 
-    Uses trimesh slice_mesh_plane which properly creates capped surfaces
-    at the cut plane. The caps are preserved by NOT filtering vertices
-    based on Z position after slicing.
+    Watertight volumes are cut by boolean-intersecting them with oversized
+    boxes (manifold3d engine, the same path as the Boolean menu). Those caps
+    are exact and, unlike trimesh's slicer, free of zero-area sliver faces
+    when the cross-section has collinear cut vertices (washers, tubes and
+    prisms whose walls are diagonally triangulated, toroids, ...). Meshes
+    that are not watertight volumes fall back to trimesh
+    ``slice_mesh_plane``, which keeps working on open surfaces.
     """
     import open3d as o3d
     import trimesh
@@ -228,31 +231,6 @@ def cut_mesh_at_z(
     if all_above:
         return (None, mesh)
 
-    # Get bottom half (keep vertices with z < z_height)
-    top_tri = intersections.slice_mesh_plane(tri_mesh, [0, 0, 1], [0, 0, z_height], None, True)
-
-    # Get top half (keep vertices with z > z_height)
-    bottom_tri = intersections.slice_mesh_plane(tri_mesh, [0, 0, -1], [0, 0, z_height], None, True)
-
-    def process_half(tri_geom: trimesh.Trimesh | None) -> tuple[np.ndarray, np.ndarray]:
-        """Convert a sliced half to Open3D arrays with consistent outward winding.
-
-        ``slice_mesh_plane`` returns capped halves; normalise their winding so each piece
-        is a watertight volume (required by downstream booleans and slicers).
-        """
-        if tri_geom is None or len(np.asarray(tri_geom.faces)) == 0:
-            return np.array([]), np.array([])
-
-        with contextlib.suppress(Exception):  # best-effort winding repair
-            trimesh.repair.fix_normals(tri_geom)
-
-        verts = np.asarray(tri_geom.vertices).copy()
-        faces = np.asarray(tri_geom.faces).copy()
-        return verts, faces
-
-    b_verts, b_faces = process_half(bottom_tri)
-    t_verts, t_faces = process_half(top_tri)
-
     def to_open3d(verts: np.ndarray, faces: np.ndarray) -> TriangleMesh | None:
         if verts is None or len(verts) == 0:
             return None
@@ -262,7 +240,38 @@ def cut_mesh_at_z(
         ensure_normals(mesh)
         return mesh
 
-    return (to_open3d(b_verts, b_faces), to_open3d(t_verts, t_faces))
+    def from_trimesh(tri_geom: Any | None) -> TriangleMesh | None:
+        """Convert a boolean/slice half to Open3D with consistent outward winding."""
+        if tri_geom is None or len(np.asarray(tri_geom.faces)) == 0:
+            return None
+        with contextlib.suppress(Exception):  # best-effort winding repair
+            trimesh.repair.fix_normals(tri_geom)
+        return to_open3d(np.asarray(tri_geom.vertices).copy(), np.asarray(tri_geom.faces).copy())
+
+    # Primary path: robust boolean against half-space boxes.
+    try:
+        vol = _as_volume(trimesh, np.asarray(tri_mesh.vertices), np.asarray(tri_mesh.faces))
+        lo = vol.vertices.min(axis=0)
+        hi = vol.vertices.max(axis=0)
+        big = 10.0 * max(float((hi - lo).max()), 1.0)
+        cx, cy = float((lo[0] + hi[0]) / 2.0), float((lo[1] + hi[1]) / 2.0)
+        below = trimesh.creation.box(extents=[big, big, z_height - (float(lo[2]) - big)])
+        below.apply_translation([cx, cy, (float(lo[2]) - big + z_height) / 2.0])
+        above = trimesh.creation.box(extents=[big, big, (float(hi[2]) + big) - z_height])
+        above.apply_translation([cx, cy, (z_height + float(hi[2]) + big) / 2.0])
+        bottom = from_trimesh(vol.intersection(below))
+        top = from_trimesh(vol.intersection(above))
+        if bottom is not None or top is not None:
+            return (bottom, top)
+    except Exception:  # boolean engine unusable (e.g. not a watertight volume)
+        pass
+
+    # Fallback: trimesh slicer with capped halves; works on open surfaces but
+    # its capping can leave zero-area sliver faces on collinear cross-sections.
+    top_tri = intersections.slice_mesh_plane(tri_mesh, [0, 0, 1], [0, 0, z_height], None, True)
+    bottom_tri = intersections.slice_mesh_plane(tri_mesh, [0, 0, -1], [0, 0, z_height], None, True)
+
+    return (from_trimesh(bottom_tri), from_trimesh(top_tri))
 
 
 def is_watertight(mesh: Any) -> bool:
