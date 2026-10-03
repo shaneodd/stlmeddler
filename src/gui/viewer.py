@@ -164,6 +164,30 @@ class MeshViewer(QOpenGLWidget):
         self.scene.set_translation(tx, ty, tz, index)
         self.update()
 
+    def set_scale(
+        self,
+        sx: float | None = None,
+        sy: float | None = None,
+        sz: float | None = None,
+        index: int | None = None,
+    ) -> None:
+        self.scene.set_scale(sx, sy, sz, index)
+        self.update()
+
+    def get_dimensions(self, index: int | None = None) -> tuple[float, float, float]:
+        return self.scene.get_dimensions(index)
+
+    def set_dimensions(
+        self,
+        width: float | None = None,
+        depth: float | None = None,
+        height: float | None = None,
+        index: int | None = None,
+    ) -> bool:
+        ok = self.scene.set_dimensions(width, depth, height, index)
+        self.update()
+        return ok
+
     def get_transform(self, index: int | None = None) -> dict[str, float]:
         return self.scene.get_transform(index)
 

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import (
     QAction,
+    QCheckBox,
     QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
@@ -99,6 +100,17 @@ class MainWindow(QMainWindow):
         self.spin_tx = self._add_spin(panel_layout, 3, "Move X:", -100000.0, 100000.0, 0.1)
         self.spin_ty = self._add_spin(panel_layout, 4, "Move Y:", -100000.0, 100000.0, 0.1)
         self.spin_tz = self._add_spin(panel_layout, 5, "Move Z:", -100000.0, 100000.0, 0.1)
+        self.spin_w = self._add_spin(
+            panel_layout, 6, "Width X (mm):", 0.001, 100000.0, 0.1, default=1.0
+        )
+        self.spin_d = self._add_spin(
+            panel_layout, 7, "Depth Y (mm):", 0.001, 100000.0, 0.1, default=1.0
+        )
+        self.spin_h = self._add_spin(
+            panel_layout, 8, "Height Z (mm):", 0.001, 100000.0, 0.1, default=1.0
+        )
+        self.lock_ratio_check = QCheckBox("Lock proportions")
+        panel_layout.addWidget(self.lock_ratio_check, 9, 0, 1, 2)
         right_layout.addWidget(rotation_panel)
 
         central.setLayout(main_layout)
@@ -110,6 +122,8 @@ class MainWindow(QMainWindow):
         for spin in (self.spin_x, self.spin_y, self.spin_z,
                      self.spin_tx, self.spin_ty, self.spin_tz):
             spin.valueChanged.connect(self._on_transform_edited)
+        for spin in (self.spin_w, self.spin_d, self.spin_h):
+            spin.valueChanged.connect(lambda _v, s=spin: self._on_dimension_edited(s))
 
         # Viewer selection changes -> reflect in list + UI.
         self.viewer.active_changed.connect(self._on_viewer_active_changed)
@@ -120,12 +134,12 @@ class MainWindow(QMainWindow):
         self._setup_menu()
 
     @staticmethod
-    def _add_spin(layout, row, label, lo, hi, step):
+    def _add_spin(layout, row, label, lo, hi, step, default=0.0):
         layout.addWidget(QLabel(label), row, 0)
         spin = QDoubleSpinBox()
         spin.setRange(lo, hi)
         spin.setSingleStep(step)
-        spin.setValue(0.0)
+        spin.setValue(default)
         layout.addWidget(spin, row, 1)
         return spin
 
@@ -238,11 +252,14 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     def _load_active_transform_into_ui(self) -> None:
         t = self.viewer.get_transform()
+        w, d, h = self.viewer.get_dimensions()
         self._syncing = True
         for spin, key in ((self.spin_x, "rot_x"), (self.spin_y, "rot_y"),
                           (self.spin_z, "rot_z"), (self.spin_tx, "trans_x"),
                           (self.spin_ty, "trans_y"), (self.spin_tz, "trans_z")):
             spin.setValue(t[key])
+        for spin, val in ((self.spin_w, w), (self.spin_d, d), (self.spin_h, h)):
+            spin.setValue(val)
         self._syncing = False
 
     def _on_transform_edited(self) -> None:
@@ -254,6 +271,29 @@ class MainWindow(QMainWindow):
         self.viewer.set_translation(
             tx=self.spin_tx.value(), ty=self.spin_ty.value(), tz=self.spin_tz.value()
         )
+
+    def _on_dimension_edited(self, changed) -> None:
+        if self._syncing or self.viewer.active_index < 0:
+            return
+        w, d, h = self.viewer.get_dimensions()
+        if self.lock_ratio_check.isChecked():
+            current = {id(self.spin_w): w, id(self.spin_d): d, id(self.spin_h): h}[id(changed)]
+            if current > 0.0:
+                ratio = changed.value() / current
+                w, d, h = w * ratio, d * ratio, h * ratio
+        else:
+            w, d, h = self.spin_w.value(), self.spin_d.value(), self.spin_h.value()
+        self.viewer.set_dimensions(width=w, depth=d, height=h)
+        self._resync_dimension_spins()
+
+    def _resync_dimension_spins(self) -> None:
+        """Snap the W/D/H boxes back to the object's true dimensions after an edit."""
+        w, d, h = self.viewer.get_dimensions()
+        self._syncing = True
+        self.spin_w.setValue(w)
+        self.spin_d.setValue(d)
+        self.spin_h.setValue(h)
+        self._syncing = False
 
     def align_face_to_plate(self) -> None:
         if not self.viewer.get_objects():
