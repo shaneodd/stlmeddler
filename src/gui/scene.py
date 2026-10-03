@@ -41,6 +41,10 @@ class _SceneObjectRequired(TypedDict):
 class SceneObject(_SceneObjectRequired, total=False):
     # Optional raw 4x4 matrix that overrides the Euler+translation model when set.
     matrix_override: np.ndarray
+    # Per-axis scale factors applied before rotation (M = T * R * S). Default 1.0.
+    scale_x: float
+    scale_y: float
+    scale_z: float
     # Optional expanded (positions, normals) float32 arrays cached by the viewer
     # for fast vertex-array draws.
     render_arrays: tuple[np.ndarray, np.ndarray]
@@ -59,9 +63,12 @@ def rotation_matrix(rx_deg: float, ry_deg: float, rz_deg: float) -> np.ndarray:
 
 
 def model_matrix(obj: SceneObject) -> np.ndarray:
-    """Build a 4x4 model matrix (T * Rz*Ry*Rx) for an object dict."""
+    """Build a 4x4 model matrix (T * Rz*Ry*Rx * S) for an object dict."""
     M = np.eye(4)
-    M[:3, :3] = rotation_matrix(obj["rot_x"], obj["rot_y"], obj["rot_z"])
+    S = np.diag([
+        obj.get("scale_x", 1.0), obj.get("scale_y", 1.0), obj.get("scale_z", 1.0),
+    ])
+    M[:3, :3] = rotation_matrix(obj["rot_x"], obj["rot_y"], obj["rot_z"]) @ S
     M[0, 3] = obj["trans_x"]
     M[1, 3] = obj["trans_y"]
     M[2, 3] = obj["trans_z"]
@@ -132,6 +139,7 @@ class SceneModel:
             "name": name or f"object_{len(self.objects)}",
             "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0,
             "trans_x": trans_x, "trans_y": trans_y, "trans_z": trans_z,
+            "scale_x": 1.0, "scale_y": 1.0, "scale_z": 1.0,
             "color": tuple(float(c) for c in np.random.uniform(0.45, 1.0, 3)),
         }
         self.objects.append(obj)
@@ -244,14 +252,79 @@ class SceneModel:
         if tz is not None:
             obj["trans_z"] = float(tz)
 
+    def set_scale(
+        self,
+        sx: float | None = None,
+        sy: float | None = None,
+        sz: float | None = None,
+        index: int | None = None,
+    ) -> None:
+        """Set absolute per-axis scale factors (defaults 1.0; non-positive ignored)."""
+        obj = self._resolve(index)
+        if obj is None:
+            return
+        for key, val in (("scale_x", sx), ("scale_y", sy), ("scale_z", sz)):
+            if val is not None and float(val) > 0.0:
+                obj[key] = float(val)
+
+    @staticmethod
+    def _local_extent(obj: SceneObject) -> np.ndarray:
+        """Unscaled bounding-box extent of the object's base geometry."""
+        if obj["verts"].size == 0:
+            return np.zeros(3)
+        return obj["verts"].max(axis=0) - obj["verts"].min(axis=0)
+
+    def get_dimensions(self, index: int | None = None) -> tuple[float, float, float]:
+        """Intrinsic size (width, depth, height) in mm: local AABB extent x scale."""
+        obj = self._resolve(index)
+        if obj is None:
+            return (0.0, 0.0, 0.0)
+        extent = self._local_extent(obj)
+        s = np.array([
+            obj.get("scale_x", 1.0), obj.get("scale_y", 1.0), obj.get("scale_z", 1.0),
+        ])
+        return tuple(float(d) for d in extent * s)
+
+    def set_dimensions(
+        self,
+        width: float | None = None,
+        depth: float | None = None,
+        height: float | None = None,
+        index: int | None = None,
+    ) -> bool:
+        """Scale the object so its intrinsic dimensions match the given mm sizes.
+
+        Each axis sets ``scale = desired / local extent``; axes with a degenerate
+        (flat) extent or a non-positive target are skipped. Returns True if any
+        axis was applied.
+        """
+        obj = self._resolve(index)
+        if obj is None:
+            return False
+        extent = self._local_extent(obj)
+        applied = False
+        for key, want, ext in (
+            ("scale_x", width, extent[0]),
+            ("scale_y", depth, extent[1]),
+            ("scale_z", height, extent[2]),
+        ):
+            if want is None or float(want) <= 0.0 or ext <= 1e-12:
+                continue
+            obj[key] = float(want) / float(ext)
+            applied = True
+        return applied
+
     def get_transform(self, index: int | None = None) -> dict[str, float]:
         obj = self._resolve(index)
         if obj is None:
             return {"rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0,
-                    "trans_x": 0.0, "trans_y": 0.0, "trans_z": 0.0}
+                    "trans_x": 0.0, "trans_y": 0.0, "trans_z": 0.0,
+                    "scale_x": 1.0, "scale_y": 1.0, "scale_z": 1.0}
         return {
             "rot_x": obj["rot_x"], "rot_y": obj["rot_y"], "rot_z": obj["rot_z"],
             "trans_x": obj["trans_x"], "trans_y": obj["trans_y"], "trans_z": obj["trans_z"],
+            "scale_x": obj.get("scale_x", 1.0), "scale_y": obj.get("scale_y", 1.0),
+            "scale_z": obj.get("scale_z", 1.0),
         }
 
     def align_active_to_plate(self, index: int | None = None) -> None:
@@ -558,10 +631,14 @@ class SceneModel:
                     verts = self.transformed_vertices(i)
                     rot_x = rot_y = rot_z = 0.0
                     trans_x = trans_y = trans_z = 0.0
+                    scale_x = scale_y = scale_z = 1.0
                 else:
                     verts = obj["verts"]
                     rot_x, rot_y, rot_z = obj["rot_x"], obj["rot_y"], obj["rot_z"]
                     trans_x, trans_y, trans_z = obj["trans_x"], obj["trans_y"], obj["trans_z"]
+                    scale_x = obj.get("scale_x", 1.0)
+                    scale_y = obj.get("scale_y", 1.0)
+                    scale_z = obj.get("scale_z", 1.0)
                 tris = obj["tris"]
 
                 buf = io.BytesIO()
@@ -574,6 +651,7 @@ class SceneModel:
                     "color": list(obj["color"]),
                     "rot_x": rot_x, "rot_y": rot_y, "rot_z": rot_z,
                     "trans_x": trans_x, "trans_y": trans_y, "trans_z": trans_z,
+                    "scale_x": scale_x, "scale_y": scale_y, "scale_z": scale_z,
                     "mesh": arcname,
                 }
                 objects_meta.append(entry)
@@ -605,6 +683,9 @@ class SceneModel:
                     "trans_x": float(entry.get("trans_x", 0.0)),
                     "trans_y": float(entry.get("trans_y", 0.0)),
                     "trans_z": float(entry.get("trans_z", 0.0)),
+                    "scale_x": float(entry.get("scale_x", 1.0)),
+                    "scale_y": float(entry.get("scale_y", 1.0)),
+                    "scale_z": float(entry.get("scale_z", 1.0)),
                     "color": tuple(float(c) for c in entry["color"]),
                 }
                 model.objects.append(obj)

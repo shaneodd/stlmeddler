@@ -653,3 +653,170 @@ def test_pick_surface_miss_returns_none():
     m.add_object(_box(), name="box", auto_align=False)
     assert m.pick_surface(np.array([99.0, 99.0, 5.0]), np.array([0.0, 0.0, -1.0])) is None
     assert m.pick_surface(np.array([1.0, 1.0, 5.0]), np.array([0.0, 0.0, 0.0])) is None
+
+
+# --------------------------------------------------------------------- #
+# Resize: per-axis scale and mm dimensions (SceneModel)
+# --------------------------------------------------------------------- #
+def test_new_object_defaults_to_unit_scale():
+    from src.gui.scene import SceneModel
+
+    s = SceneModel()
+    s.add_object(_box(), name="box", auto_align=False)
+    t = s.get_transform()
+    assert (t["scale_x"], t["scale_y"], t["scale_z"]) == (1.0, 1.0, 1.0)
+    assert s.get_dimensions() == pytest.approx((2.0, 2.0, 3.0))
+
+
+def test_set_scale_scales_world_vertices():
+    from src.gui.scene import SceneModel
+
+    s = SceneModel()
+    s.add_object(_box(), name="box", auto_align=False)
+    s.set_scale(sx=2.0)
+    world = s.transformed_vertices(0)
+    assert np.allclose(world.max(axis=0), [4.0, 2.0, 3.0])
+    assert s.get_dimensions() == pytest.approx((4.0, 2.0, 3.0))
+
+
+def test_set_scale_ignores_non_positive_factors():
+    from src.gui.scene import SceneModel
+
+    s = SceneModel()
+    s.add_object(_box(), name="box", auto_align=False)
+    s.set_scale(sx=0.0, sy=-1.0)
+    assert s.get_dimensions() == pytest.approx((2.0, 2.0, 3.0))
+
+
+def test_scale_only_affects_active_object():
+    from src.gui.scene import SceneModel
+
+    s = SceneModel()
+    s.add_object(_box(), name="A", auto_align=False)
+    s.add_object(_box(), name="B", auto_align=False)  # active
+    before_a = s.transformed_vertices(0).copy()
+
+    s.set_scale(sx=3.0)
+    assert np.allclose(s.transformed_vertices(0), before_a)
+    assert s.get_dimensions(0) == pytest.approx((2.0, 2.0, 3.0))
+    assert s.get_dimensions(1) == pytest.approx((6.0, 2.0, 3.0))
+
+
+def test_set_dimensions_hits_exact_mm_size():
+    from src.gui.scene import SceneModel
+
+    s = SceneModel()
+    s.add_object(_box(), name="box", auto_align=False)
+    assert s.set_dimensions(width=10.0, depth=5.0, height=6.0)
+    assert s.get_dimensions() == pytest.approx((10.0, 5.0, 6.0))
+    world = s.transformed_vertices(0)
+    assert np.allclose(world.max(axis=0) - world.min(axis=0), [10.0, 5.0, 6.0], atol=1e-9)
+
+
+def test_dimensions_rotation_independent():
+    from src.gui.scene import SceneModel
+
+    s = SceneModel()
+    s.add_object(_box(), name="box", auto_align=False)
+    before = s.get_dimensions()
+    s.rotate([0, 0, 1], np.pi / 3)
+    assert s.get_dimensions() == pytest.approx(before)
+
+
+def test_dimensions_roundtrip_after_scale():
+    from src.gui.scene import SceneModel
+
+    s = SceneModel()
+    s.add_object(_box(), name="box", auto_align=False)
+    s.set_scale(sy=0.25)
+    w, d, h = s.get_dimensions()
+    assert s.set_dimensions(width=w, depth=d, height=h)
+    assert s.get_dimensions() == pytest.approx((w, d, h))
+
+
+def test_set_dimensions_skips_degenerate_axis():
+    from src.gui.scene import SceneModel
+
+    s = SceneModel()
+    s.add_object(_box(), name="plate")
+    # Flatten Z so the local extent is zero.
+    s.objects[0]["verts"] = s.objects[0]["verts"].copy()
+    s.objects[0]["verts"][:, 2] = 0.0
+
+    assert s.set_dimensions(width=4.0, height=2.0)  # height must be skipped
+    assert s.objects[0]["scale_z"] == pytest.approx(1.0)
+    w, _d, h = s.get_dimensions()
+    assert w == pytest.approx(4.0) and h == pytest.approx(0.0)
+
+
+def test_set_dimensions_no_object_returns_false():
+    from src.gui.scene import SceneModel
+
+    assert SceneModel().set_dimensions(width=5.0) is False
+
+
+def test_project_scale_roundtrip(tmp_path):
+    from src.gui.scene import SceneModel
+
+    m = SceneModel()
+    m.add_object(_box(), name="box", auto_align=False)
+    m.set_scale(sx=2.0, sy=0.5)
+    path = str(tmp_path / "scaled.stlproj")
+    m.save_project(path)
+
+    loaded = SceneModel.load_project(path)
+    obj = loaded.objects[0]
+    assert (obj["scale_x"], obj["scale_y"], obj["scale_z"]) == (2.0, 0.5, 1.0)
+    assert loaded.get_dimensions() == pytest.approx((4.0, 1.0, 3.0))
+
+
+def test_project_without_scale_loads_as_unit(tmp_path):
+    import io
+    import json
+    import zipfile
+
+    import numpy as np
+
+    from src.gui.scene import SceneModel
+
+    # Hand-build a v1 manifest that predates the scale fields.
+    m = SceneModel()
+    m.add_object(_box(), name="box", auto_align=False)
+    verts, tris = m.objects[0]["verts"], m.objects[0]["tris"]
+    path = str(tmp_path / "legacy.stlproj")
+    with zipfile.ZipFile(path, "w") as zf:
+        buf = io.BytesIO()
+        np.savez(buf, verts=verts, tris=tris)
+        zf.writestr("parts/0.npz", buf.getvalue())
+        entry = {
+            "name": "box", "color": [1.0, 1.0, 1.0],
+            "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0,
+            "trans_x": 0.0, "trans_y": 0.0, "trans_z": 0.0,
+            "mesh": "parts/0.npz",
+        }
+        zf.writestr(
+            "manifest.json", json.dumps({"version": 1, "active_index": 0, "objects": [entry]})
+        )
+
+    loaded = SceneModel.load_project(path)
+    obj = loaded.objects[0]
+    assert (obj["scale_x"], obj["scale_y"], obj["scale_z"]) == (1.0, 1.0, 1.0)
+    assert loaded.get_dimensions() == pytest.approx((2.0, 2.0, 3.0))
+
+
+def test_matrix_override_bake_clears_scale_on_save(tmp_path):
+    from src.gui.scene import SceneModel
+
+    m = SceneModel()
+    m.add_object(_box(), name="box", auto_align=False)
+    m.set_scale(sx=3.0)
+    M = np.eye(4)
+    M[0, 3] = 7.0
+    m.apply_transform(M)  # override composes the pending scale: x 0..6 then +7
+
+    path = str(tmp_path / "override_scale.stlproj")
+    m.save_project(path)
+    loaded = SceneModel.load_project(path)
+    obj = loaded.objects[0]
+    assert (obj["scale_x"], obj["scale_y"], obj["scale_z"]) == (1.0, 1.0, 1.0)
+    assert np.allclose(loaded.transformed_vertices(0)[:, 0].max(), 13.0)  # 3*2 + 7

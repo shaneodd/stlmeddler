@@ -17,6 +17,7 @@ operations, and **PyOpenGL** for rendering.
 
 - Load STL/OBJ meshes and generate primitives (cube, sphere, cylinder, cone)
 - Multiple objects per scene, each with its own transform and colour
+- Move, rotate and resize (target width/depth/height in mm, with optional proportion lock)
 - 3-D click-to-select, face-pick alignment, and measure-between-two-points tools
 - Boolean union/difference between any two objects in the scene
 - Horizontal cut plane with build-plate alignment
@@ -150,6 +151,11 @@ adds to the `SceneModel` and emits `active_changed`; the window mirrors that int
 "Loaded Objects" list. Selecting a row or clicking an object in the 3-D view calls
 `viewer.set_active`, which reframes the camera on that object and repopulates the
 transform spin boxes; editing a spin box writes back to the active object's transform.
+The same panel resizes objects: the Width/Depth/Height boxes take target sizes in mm
+(intrinsic bounding-box dimensions, so they are unaffected by rotation), and a
+"Lock proportions" checkbox scales all three axes together when one is edited.
+Scaling is applied about the object's local origin, so re-use Move or
+**Center on Build Plate** afterwards to reposition.
 **Align Face to Build Plate** (Operations menu) arms face-pick mode: the next face
 clicked in the viewer is rotated flat onto the plate. Cut replaces an object with new
 parts, and export merges every object's transform into one mesh via `save_mesh`.
