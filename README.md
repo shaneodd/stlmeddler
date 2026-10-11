@@ -25,6 +25,9 @@ operations, and **PyOpenGL** for rendering.
 - STEP (B-rep) export for CAD applications (SolidWorks, Fusion 360, FreeCAD): closed
   meshes become real solids, open scans export as surface shells, with optional
   decimation for large scans
+- Scan reverse-engineering: detects planar faces and cylindrical holes, snaps diameters
+  to a nominal drill list (editable JSON), and rebuilds a clean CAD solid whose holes
+  come back at exact nominal size and position
 
 ## Installation
 
@@ -95,6 +98,7 @@ pytest --cov=src --cov-report=term-missing
 - `tests/test_scene.py` - Headless tests for the multi-object SceneModel (object management, transform isolation, face-to-plate alignment, cut integration, export consistency)
 - `tests/test_step_export.py` - Headless tests for mesh -> STEP export (solid construction, open-shell handling, decimation, STEP re-import; skips without cadquery-ocp)
 - `tests/test_reconstruct.py` - Headless tests for scan reverse-engineering (plane/cylindrical-hole detection, nominal-diameter snapping, snap-list JSON round-trips, noise tolerance)
+- `tests/test_cad_build.py` - Headless tests for feature -> solid rebuild (nominal volumes for holed blocks, counterbores, washers, round bars, noise, fallbacks)
 - `tests/test_workflow.py` - End-to-end operation workflows
 
 ## Project Structure
@@ -110,6 +114,7 @@ stlmeddler/
 │   ├─ mesh_ops.py           # Mesh operations (load, save, boolean ops, primitives, cut)
 │   ├─ step_ops.py           # STEP (B-rep) export via cadquery-ocp (lazy-loaded)
 │   ├─ reconstruct.py        # Scan reverse-engineering: detect planes/holes, snap to nominals
+│   ├─ cad_build.py          # Detected features -> clean parametric-ish solid -> STEP
 │   └─ gui/                  # GUI package
 │       ├─ __init__.py       # Init for GUI subpackage
 │       ├─ picking.py        # Pure-maths camera/ray-picking helpers (no Qt/GL)
@@ -141,6 +146,9 @@ step_ops.py        STEP (B-rep) export: sews triangles into shells, closed shell
 reconstruct.py     Scan reverse-engineering: grows RANSAC planes and fits cylindrical
                    holes (area-weighted least squares, tolerant of scan noise), snaps
                    measured diameters to a nominal drill list. Pure numpy/scipy.
+cad_build.py       Feature -> clean solid: convex hull trimmed by hull-bound planes,
+                   drilled holes re-cut at nominal diameters, full round outer walls
+                   re-intersected as true cylinders; exports STEP via step_ops.
         |
 gui/scene.py       SceneModel: owns the ordered object list (base geometry + a
                    per-object transform and colour) plus transforms, build-plate

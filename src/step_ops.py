@@ -40,10 +40,12 @@ def _load_ocp() -> SimpleNamespace:
     try:
         import OCP.Bnd as _bndbox
         import OCP.BRep as _brep
+        import OCP.BRepAlgoAPI as _algo
         import OCP.BRepBndLib as _bndlib
         import OCP.BRepBuilderAPI as _builder
         import OCP.BRepCheck as _check
         import OCP.BRepGProp as _gprop
+        import OCP.BRepPrimAPI as _prim
         import OCP.gp as _gp
         import OCP.GProp as _gprops
         import OCP.IFSelect as _ifselect
@@ -59,6 +61,7 @@ def _load_ocp() -> SimpleNamespace:
         ) from e
     return SimpleNamespace(
         brep=_brep,
+        algo=_algo,
         bndlib=_bndlib,
         bndbox=_bndbox,
         builder=_builder,
@@ -68,6 +71,7 @@ def _load_ocp() -> SimpleNamespace:
         gp=_gp,
         ifselect=_ifselect,
         interface=_interface,
+        prim=_prim,
         step=_step,
         topabs=_topabs,
         topexp=_topexp,

@@ -61,7 +61,7 @@ files = ["src"]
 
 # Enforce full annotations on the pure-logic core; GUI modules stay lenient.
 [[tool.mypy.overrides]]
-module = ["src.mesh_ops", "src.gui.scene", "src.step_ops", "src.reconstruct"]
+module = ["src.mesh_ops", "src.gui.scene", "src.step_ops", "src.reconstruct", "src.cad_build"]
 disallow_untyped_defs = true
 
 # Qt/OpenGL glue: PyQt5 ships incomplete stubs (e.g. Qt.LeftButton, Optional
