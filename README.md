@@ -22,6 +22,9 @@ operations, and **PyOpenGL** for rendering.
 - Boolean union/difference between any two objects in the scene
 - Horizontal cut plane with build-plate alignment
 - Scene persistence (`.stlproj` project bundles) and merged single-mesh export (STL/OBJ/3MF)
+- STEP (B-rep) export for CAD applications (SolidWorks, Fusion 360, FreeCAD): closed
+  meshes become real solids, open scans export as surface shells, with optional
+  decimation for large scans
 
 ## Installation
 
@@ -90,6 +93,7 @@ pytest --cov=src --cov-report=term-missing
 - `tests/test_mesh_ops_basic.py` - Tests for core mesh_ops helpers
 - `tests/test_picking.py` - Pure-maths tests for camera modelview, ray casting and triangle intersection
 - `tests/test_scene.py` - Headless tests for the multi-object SceneModel (object management, transform isolation, face-to-plate alignment, cut integration, export consistency)
+- `tests/test_step_export.py` - Headless tests for mesh -> STEP export (solid construction, open-shell handling, decimation, STEP re-import; skips without cadquery-ocp)
 - `tests/test_workflow.py` - End-to-end operation workflows
 
 ## Project Structure
@@ -103,6 +107,7 @@ stlmeddler/
 │   ├─ __init__.py           # Package init
 │   ├─ main.py               # Entry point / GUI launch
 │   ├─ mesh_ops.py           # Mesh operations (load, save, boolean ops, primitives, cut)
+│   ├─ step_ops.py           # STEP (B-rep) export via cadquery-ocp (lazy-loaded)
 │   └─ gui/                  # GUI package
 │       ├─ __init__.py       # Init for GUI subpackage
 │       ├─ picking.py        # Pure-maths camera/ray-picking helpers (no Qt/GL)
@@ -128,7 +133,10 @@ The code is organised in thin, testable layers:
 ```
 mesh_ops.py        Pure mesh operations (load/save, primitives, booleans, cut).
                    No Qt/GL dependency - the foundation everything builds on.
-       |
+step_ops.py        STEP (B-rep) export: sews triangles into shells, closed shells
+                   into solids (mm units), re-reads the file to verify. Wraps
+                   cadquery-ocp, imported lazily; no Qt/GL dependency.
+        |
 gui/scene.py       SceneModel: owns the ordered object list (base geometry + a
                    per-object transform and colour) plus transforms, build-plate
                    alignment (including face-to-plate), cut and merged-export logic.
@@ -159,6 +167,9 @@ Scaling is applied about the object's local origin, so re-use Move or
 **Align Face to Build Plate** (Operations menu) arms face-pick mode: the next face
 clicked in the viewer is rotated flat onto the plate. Cut replaces an object with new
 parts, and export merges every object's transform into one mesh via `save_mesh`.
+**Export STEP...** (File menu) hands the merged scene - or just the selected object via
+**Export Active Object as STEP...** - to `step_ops.mesh_to_step`, which rebuilds it as a
+B-rep solid (or surface shell for open scans) and writes a millimetre STEP file.
 
 ## Additional Notes
 

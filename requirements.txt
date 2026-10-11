@@ -22,5 +22,8 @@ manifold3d>=0.5.0
 networkx>=2.0
 lxml>=4.9
 
+# Open Cascade kernel for STEP (B-rep) export (src/step_ops.py)
+cadquery-ocp>=7.8
+
 # Testing
 pytest>=7.0
