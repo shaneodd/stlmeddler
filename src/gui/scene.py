@@ -13,7 +13,7 @@ import json
 import math
 import zipfile
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 import numpy as np
 
@@ -263,7 +263,12 @@ class SceneModel:
         obj = self._resolve(index)
         if obj is None:
             return
-        for key, val in (("scale_x", sx), ("scale_y", sy), ("scale_z", sz)):
+        pairs: tuple[tuple[Literal["scale_x", "scale_y", "scale_z"], float | None], ...] = (
+            ("scale_x", sx),
+            ("scale_y", sy),
+            ("scale_z", sz),
+        )
+        for key, val in pairs:
             if val is not None and float(val) > 0.0:
                 obj[key] = float(val)
 
@@ -283,7 +288,8 @@ class SceneModel:
         s = np.array([
             obj.get("scale_x", 1.0), obj.get("scale_y", 1.0), obj.get("scale_z", 1.0),
         ])
-        return tuple(float(d) for d in extent * s)
+        dims = (extent * s).tolist()
+        return float(dims[0]), float(dims[1]), float(dims[2])
 
     def set_dimensions(
         self,
@@ -303,10 +309,13 @@ class SceneModel:
             return False
         extent = self._local_extent(obj)
         applied = False
-        for key, want, ext in (
-            ("scale_x", width, extent[0]),
-            ("scale_y", depth, extent[1]),
-            ("scale_z", height, extent[2]),
+        wanted: tuple[tuple[Literal["scale_x", "scale_y", "scale_z"], float | None], ...] = (
+            ("scale_x", width),
+            ("scale_y", depth),
+            ("scale_z", height),
+        )
+        for (key, want), ext in zip(
+            wanted, (extent[0], extent[1], extent[2]), strict=True
         ):
             if want is None or float(want) <= 0.0 or ext <= 1e-12:
                 continue
