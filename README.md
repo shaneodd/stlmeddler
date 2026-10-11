@@ -94,6 +94,7 @@ pytest --cov=src --cov-report=term-missing
 - `tests/test_picking.py` - Pure-maths tests for camera modelview, ray casting and triangle intersection
 - `tests/test_scene.py` - Headless tests for the multi-object SceneModel (object management, transform isolation, face-to-plate alignment, cut integration, export consistency)
 - `tests/test_step_export.py` - Headless tests for mesh -> STEP export (solid construction, open-shell handling, decimation, STEP re-import; skips without cadquery-ocp)
+- `tests/test_reconstruct.py` - Headless tests for scan reverse-engineering (plane/cylindrical-hole detection, nominal-diameter snapping, snap-list JSON round-trips, noise tolerance)
 - `tests/test_workflow.py` - End-to-end operation workflows
 
 ## Project Structure
@@ -108,6 +109,7 @@ stlmeddler/
 │   ├─ main.py               # Entry point / GUI launch
 │   ├─ mesh_ops.py           # Mesh operations (load, save, boolean ops, primitives, cut)
 │   ├─ step_ops.py           # STEP (B-rep) export via cadquery-ocp (lazy-loaded)
+│   ├─ reconstruct.py        # Scan reverse-engineering: detect planes/holes, snap to nominals
 │   └─ gui/                  # GUI package
 │       ├─ __init__.py       # Init for GUI subpackage
 │       ├─ picking.py        # Pure-maths camera/ray-picking helpers (no Qt/GL)
@@ -136,6 +138,9 @@ mesh_ops.py        Pure mesh operations (load/save, primitives, booleans, cut).
 step_ops.py        STEP (B-rep) export: sews triangles into shells, closed shells
                    into solids (mm units), re-reads the file to verify. Wraps
                    cadquery-ocp, imported lazily; no Qt/GL dependency.
+reconstruct.py     Scan reverse-engineering: grows RANSAC planes and fits cylindrical
+                   holes (area-weighted least squares, tolerant of scan noise), snaps
+                   measured diameters to a nominal drill list. Pure numpy/scipy.
         |
 gui/scene.py       SceneModel: owns the ordered object list (base geometry + a
                    per-object transform and colour) plus transforms, build-plate
