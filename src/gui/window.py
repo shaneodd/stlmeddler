@@ -13,6 +13,7 @@ import numpy as np
 from PyQt5.QtWidgets import (
     QAction,
     QCheckBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
@@ -171,6 +172,12 @@ class MainWindow(QMainWindow):
         )
         self.export_step_active_action.triggered.connect(self.export_active_step)
 
+        self.reconstruct_action = QAction("Reconstruct CAD from Active Object...", self)
+        self.reconstruct_action.setStatusTip(
+            "Detect planes and holes, review/snap the dimensions, build a clean STEP solid"
+        )
+        self.reconstruct_action.triggered.connect(self.reconstruct_active_cad)
+
         self.diff_action = QAction("Boolean Difference", self)
         self.diff_action.triggered.connect(self.boolean_difference)
         self.union_action = QAction("Boolean Union", self)
@@ -214,6 +221,8 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.save_action)
         file_menu.addAction(self.export_step_action)
         file_menu.addAction(self.export_step_active_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self.reconstruct_action)
         ops_menu = menubar.addMenu("&Operations")
         ops_menu.addAction(self.diff_action)
         ops_menu.addAction(self.union_action)
@@ -465,6 +474,58 @@ class MainWindow(QMainWindow):
                 "shell; CAD applications will import it as a surface body."
             )
         QMessageBox.information(self, "Export STEP", message)
+
+    # ------------------------------------------------------------------ #
+    # CAD reconstruction (detect -> review -> rebuild as B-rep)
+    # ------------------------------------------------------------------ #
+    def reconstruct_active_cad(self) -> None:
+        index = self.viewer.active_index
+        if index < 0:
+            QMessageBox.warning(self, "Warning", "No active object selected.")
+            return
+        obj = self.viewer.get_objects()[index]
+        verts = self.viewer.transformed_vertices(index)
+        try:
+            from src.reconstruct import DetectOptions, SnapList, detect_features
+
+            snap = SnapList.default()
+            # Slightly looser tolerances than the defaults: scans rarely sit
+            # perfectly on their nominal geometry.
+            features = detect_features(
+                verts,
+                obj["tris"],
+                snap=snap,
+                opts=DetectOptions(plane_distance=0.2, cylinder_distance=0.2),
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Feature detection failed: {e}")
+            return
+
+        from src.gui.review_dialog import FeatureReviewDialog
+
+        dialog = FeatureReviewDialog(features, snap, self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        features = dialog.feature_set()
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Reconstruct CAD as STEP", "", "STEP Files (*.step *.stp)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith((".step", ".stp")):
+            path += ".step"
+        try:
+            from src.cad_build import features_to_step
+
+            # The dialog already dropped/unselected partial walls it rejected.
+            result = features_to_step(features, path, verts=verts, convex_arc_min=0.0)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to build STEP: {e}")
+            return
+        QMessageBox.information(
+            self, "Reconstruct CAD", f"STEP written to {result.path}\n{result.summary}"
+        )
 
     # ------------------------------------------------------------------ #
     # Project persistence (.stlproj)

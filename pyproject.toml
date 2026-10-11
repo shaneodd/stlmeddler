@@ -67,5 +67,5 @@ disallow_untyped_defs = true
 # Qt/OpenGL glue: PyQt5 ships incomplete stubs (e.g. Qt.LeftButton, Optional
 # menuBar()), so these thin view modules are not type-checked to avoid noise.
 [[tool.mypy.overrides]]
-module = ["src.gui.viewer", "src.gui.window", "src.gui.primitive_dialog"]
+module = ["src.gui.viewer", "src.gui.window", "src.gui.primitive_dialog", "src.gui.review_dialog"]
 ignore_errors = true

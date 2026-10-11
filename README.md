@@ -121,6 +121,7 @@ stlmeddler/
 │       ├─ scene.py          # Pure-Python multi-object SceneModel (transforms, alignment, export)
 │       ├─ viewer.py         # OpenGL mesh viewer widget (Qt facade over SceneModel)
 │       ├─ primitive_dialog.py # Primitive creation dialog (shape + dimensions)
+│       ├─ review_dialog.py  # Feature-review dialog (detected vs snapped, override/skip)
 │       └─ window.py         # MainWindow UI definition / controller
 └─ tests/                    # Unit / integration tests
 ```
@@ -183,6 +184,12 @@ parts, and export merges every object's transform into one mesh via `save_mesh`.
 **Export STEP...** (File menu) hands the merged scene - or just the selected object via
 **Export Active Object as STEP...** - to `step_ops.mesh_to_step`, which rebuilds it as a
 B-rep solid (or surface shell for open scans) and writes a millimetre STEP file.
+**Reconstruct CAD from Active Object...** (File menu) runs the reverse-engineering
+pipeline: `reconstruct.detect_features` finds the planes and cylindrical holes and snaps
+diameters to the nominal drill list, a review dialog lets you override any diameter
+(pick or type) or untick detections, and `cad_build.features_to_step` then rebuilds a
+clean kernel solid - hull trimmed to the detected outline, holes re-cut at nominal size -
+and writes it as STEP.
 
 ## Additional Notes
 
