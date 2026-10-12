@@ -485,28 +485,34 @@ class MainWindow(QMainWindow):
             return
         obj = self.viewer.get_objects()[index]
         verts = self.viewer.transformed_vertices(index)
-        try:
-            from src.reconstruct import DetectOptions, SnapList, detect_features
-
-            snap = SnapList.default()
-            # Slightly looser tolerances than the defaults: scans rarely sit
-            # perfectly on their nominal geometry.
-            features = detect_features(
-                verts,
-                obj["tris"],
-                snap=snap,
-                opts=DetectOptions(plane_distance=0.2, cylinder_distance=0.2),
-            )
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Feature detection failed: {e}")
-            return
-
         from src.gui.review_dialog import FeatureReviewDialog
+        from src.reconstruct import DetectOptions, SnapList, detect_features
 
-        dialog = FeatureReviewDialog(features, snap, self)
-        if dialog.exec_() != QDialog.Accepted:
-            return
-        features = dialog.feature_set()
+        # Slightly looser tolerances than the defaults: scans rarely sit
+        # perfectly on their nominal geometry; the dialog exposes both knobs.
+        opts = DetectOptions(plane_distance=0.2, cylinder_distance=0.2)
+        snap = SnapList.default()
+        while True:
+            try:
+                features = detect_features(verts, obj["tris"], snap=snap, opts=opts)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Feature detection failed: {e}")
+                return
+
+            dialog = FeatureReviewDialog(features, snap, opts, self)
+            if dialog.exec_() != QDialog.Accepted:
+                return
+            if dialog.redetect_requested:
+                opts = dialog.detect_options()
+                try:
+                    snap = dialog.snap_list()
+                except ValueError as e:
+                    QMessageBox.warning(
+                        self, "Invalid snap list", f"{e}\nKeeping the previous list."
+                    )
+                continue
+            features = dialog.feature_set()
+            break
 
         path, _ = QFileDialog.getSaveFileName(
             self, "Reconstruct CAD as STEP", "", "STEP Files (*.step *.stp)"

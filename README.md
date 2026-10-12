@@ -99,6 +99,7 @@ pytest --cov=src --cov-report=term-missing
 - `tests/test_step_export.py` - Headless tests for mesh -> STEP export (solid construction, open-shell handling, decimation, STEP re-import; skips without cadquery-ocp)
 - `tests/test_reconstruct.py` - Headless tests for scan reverse-engineering (plane/cylindrical-hole detection, nominal-diameter snapping, snap-list JSON round-trips, noise tolerance)
 - `tests/test_cad_build.py` - Headless tests for feature -> solid rebuild (nominal volumes for holed blocks, counterbores, washers, round bars, noise, fallbacks)
+- `tests/test_review_dialog.py` - Offscreen Qt tests for the feature-review dialog (override/drop, snap-list editor + JSON import/export, tuning and re-detect loop)
 - `tests/test_workflow.py` - End-to-end operation workflows
 
 ## Project Structure
@@ -189,7 +190,10 @@ pipeline: `reconstruct.detect_features` finds the planes and cylindrical holes a
 diameters to the nominal drill list, a review dialog lets you override any diameter
 (pick or type) or untick detections, and `cad_build.features_to_step` then rebuilds a
 clean kernel solid - hull trimmed to the detected outline, holes re-cut at nominal size -
-and writes it as STEP.
+and writes it as STEP. The dialog also carries the scan-tuning knobs: plane/cylinder
+inlier distances with a **Re-detect** button, and an editable snap list (one diameter
+per line, snap tolerance, JSON import/export/reset) - re-detecting re-runs the pipeline
+with the edited settings.
 
 ## Additional Notes
 
