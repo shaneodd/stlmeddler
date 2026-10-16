@@ -5,10 +5,14 @@ snap-list JSON round-trips, exercised on synthetic parts with and without
 scan noise. No Qt involved.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 trimesh = pytest.importorskip("trimesh")
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def _part_with_holes():
@@ -123,11 +127,9 @@ def test_counterbore_peels_two_diameters():
 # Concavity: real scan part (washer) and a solid round bar
 # --------------------------------------------------------------------- #
 def test_washer_bore_concave_rim_convex():
-    from pathlib import Path
-
     from src.reconstruct import detect_features
 
-    mesh = trimesh.load(str(Path("samples/washer.STL").resolve()))
+    mesh = trimesh.load(str(FIXTURES_DIR / "washer.stl"))
     feats = detect_features(mesh.vertices, mesh.faces)
 
     assert len(feats.holes) >= 2

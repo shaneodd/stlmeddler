@@ -66,10 +66,12 @@ def test_plain_box_rebuilt_exactly(tmp_path, ocp_available):
 
 
 def test_washer_gets_round_wall_and_bore(tmp_path, ocp_available):
+    from pathlib import Path
+
     from src.cad_build import features_to_step
     from src.reconstruct import SnapList, detect_features
 
-    washer = trimesh.load("samples/washer.STL")
+    washer = trimesh.load(str(Path(__file__).parent / "fixtures" / "washer.stl"))
     features = detect_features(washer.vertices, washer.faces, snap=SnapList.default())
     result = features_to_step(features, str(tmp_path / "washer.step"), verts=washer.vertices)
 
