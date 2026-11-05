@@ -9,9 +9,11 @@ spin boxes, and drives operations (open, primitives, boolean, cut, export).
 
 from pathlib import Path
 
+import numpy as np
 from PyQt5.QtWidgets import (
     QAction,
     QCheckBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
@@ -158,6 +160,24 @@ class MainWindow(QMainWindow):
         self.save_action = QAction("Export Mesh...", self)
         self.save_action.triggered.connect(self.save_file)
 
+        self.export_step_action = QAction("Export STEP...", self)
+        self.export_step_action.setStatusTip(
+            "Convert the whole scene to a STEP (B-rep) file for CAD applications"
+        )
+        self.export_step_action.triggered.connect(self.export_step)
+
+        self.export_step_active_action = QAction("Export Active Object as STEP...", self)
+        self.export_step_active_action.setStatusTip(
+            "Convert only the selected object to a STEP (B-rep) file"
+        )
+        self.export_step_active_action.triggered.connect(self.export_active_step)
+
+        self.reconstruct_action = QAction("Reconstruct CAD from Active Object...", self)
+        self.reconstruct_action.setStatusTip(
+            "Detect planes and holes, review/snap the dimensions, build a clean STEP solid"
+        )
+        self.reconstruct_action.triggered.connect(self.reconstruct_active_cad)
+
         self.diff_action = QAction("Boolean Difference", self)
         self.diff_action.triggered.connect(self.boolean_difference)
         self.union_action = QAction("Boolean Union", self)
@@ -199,6 +219,10 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.project_open_action)
         file_menu.addAction(self.project_save_action)
         file_menu.addAction(self.save_action)
+        file_menu.addAction(self.export_step_action)
+        file_menu.addAction(self.export_step_active_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self.reconstruct_action)
         ops_menu = menubar.addMenu("&Operations")
         ops_menu.addAction(self.diff_action)
         ops_menu.addAction(self.union_action)
@@ -405,6 +429,109 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Saved", f"Mesh saved to {path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save file: {e}")
+
+    # ------------------------------------------------------------------ #
+    # STEP export
+    # ------------------------------------------------------------------ #
+    def export_step(self) -> None:
+        if not self.viewer.get_objects():
+            QMessageBox.warning(self, "Warning", "No mesh loaded to export.")
+            return
+        merged = self.viewer.merged_mesh()
+        self._export_step_dialog(
+            np.asarray(merged.vertices), np.asarray(merged.triangles)
+        )
+
+    def export_active_step(self) -> None:
+        index = self.viewer.active_index
+        if index < 0:
+            QMessageBox.warning(self, "Warning", "No active object selected.")
+            return
+        obj = self.viewer.get_objects()[index]
+        self._export_step_dialog(
+            self.viewer.transformed_vertices(index), obj["tris"]
+        )
+
+    def _export_step_dialog(self, verts, faces) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export STEP", "", "STEP Files (*.step *.stp)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith((".step", ".stp")):
+            path += ".step"
+        try:
+            from src.step_ops import mesh_to_step
+
+            result = mesh_to_step(verts, faces, path)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to export STEP: {e}")
+            return
+        message = f"STEP exported to {result.path}\n{result.summary}"
+        if not result.watertight:
+            message += (
+                "\n\nThe mesh is not watertight so it was written as a surface "
+                "shell; CAD applications will import it as a surface body."
+            )
+        QMessageBox.information(self, "Export STEP", message)
+
+    # ------------------------------------------------------------------ #
+    # CAD reconstruction (detect -> review -> rebuild as B-rep)
+    # ------------------------------------------------------------------ #
+    def reconstruct_active_cad(self) -> None:
+        index = self.viewer.active_index
+        if index < 0:
+            QMessageBox.warning(self, "Warning", "No active object selected.")
+            return
+        obj = self.viewer.get_objects()[index]
+        verts = self.viewer.transformed_vertices(index)
+        from src.gui.review_dialog import FeatureReviewDialog
+        from src.reconstruct import DetectOptions, SnapList, detect_features
+
+        # Slightly looser tolerances than the defaults: scans rarely sit
+        # perfectly on their nominal geometry; the dialog exposes both knobs.
+        opts = DetectOptions(plane_distance=0.2, cylinder_distance=0.2)
+        snap = SnapList.default()
+        while True:
+            try:
+                features = detect_features(verts, obj["tris"], snap=snap, opts=opts)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Feature detection failed: {e}")
+                return
+
+            dialog = FeatureReviewDialog(features, snap, opts, self)
+            if dialog.exec_() != QDialog.Accepted:
+                return
+            if dialog.redetect_requested:
+                opts = dialog.detect_options()
+                try:
+                    snap = dialog.snap_list()
+                except ValueError as e:
+                    QMessageBox.warning(
+                        self, "Invalid snap list", f"{e}\nKeeping the previous list."
+                    )
+                continue
+            features = dialog.feature_set()
+            break
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Reconstruct CAD as STEP", "", "STEP Files (*.step *.stp)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith((".step", ".stp")):
+            path += ".step"
+        try:
+            from src.cad_build import features_to_step
+
+            # The dialog already dropped/unselected partial walls it rejected.
+            result = features_to_step(features, path, verts=verts, convex_arc_min=0.0)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to build STEP: {e}")
+            return
+        QMessageBox.information(
+            self, "Reconstruct CAD", f"STEP written to {result.path}\n{result.summary}"
+        )
 
     # ------------------------------------------------------------------ #
     # Project persistence (.stlproj)

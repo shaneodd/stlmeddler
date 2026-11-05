@@ -29,6 +29,8 @@ dependencies = [
     "manifold3d>=0.5.0",
     "networkx>=2.0",
     "lxml>=4.9",
+    # Open Cascade kernel for STEP (B-rep) export (src/step_ops.py)
+    "cadquery-ocp>=7.8",
 ]
 
 [project.optional-dependencies]
@@ -59,11 +61,11 @@ files = ["src"]
 
 # Enforce full annotations on the pure-logic core; GUI modules stay lenient.
 [[tool.mypy.overrides]]
-module = ["src.mesh_ops", "src.gui.scene"]
+module = ["src.mesh_ops", "src.gui.scene", "src.step_ops", "src.reconstruct", "src.cad_build"]
 disallow_untyped_defs = true
 
 # Qt/OpenGL glue: PyQt5 ships incomplete stubs (e.g. Qt.LeftButton, Optional
 # menuBar()), so these thin view modules are not type-checked to avoid noise.
 [[tool.mypy.overrides]]
-module = ["src.gui.viewer", "src.gui.window", "src.gui.primitive_dialog"]
+module = ["src.gui.viewer", "src.gui.window", "src.gui.primitive_dialog", "src.gui.review_dialog"]
 ignore_errors = true
