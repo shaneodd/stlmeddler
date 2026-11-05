@@ -295,11 +295,14 @@ def _extract_planes(
         if len(idx) >= max(3, min_seed):
             pc = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(centres[idx]))
             try:
-                model, inl = pc.segment_plane(
+                model, inliers = pc.segment_plane(
                     distance_threshold=opts.plane_distance,
                     ransac_n=3,
                     num_iterations=1000,
                 )
+                # open3d's stubs vary by version (list[int] vs Vector2i);
+                # normalise so `inl` is always a real ndarray.
+                inl = np.asarray(inliers)
             except Exception:
                 model = None
             if model is not None and len(inl) >= min_seed:
