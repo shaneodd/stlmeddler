@@ -9,3 +9,7 @@ mypy>=1.11
 
 # Test coverage
 pytest-cov>=5.0
+
+# Security auditing (see .github/workflows/ci.yml 'security' job)
+bandit>=1.7
+pip-audit>=2.7

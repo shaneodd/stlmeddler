@@ -41,3 +41,27 @@ jobs:
       # Coverage is reported only (no threshold yet); tests must pass.
       - name: Run tests with coverage
         run: pytest tests/ --cov=src --cov-report=term-missing --cov-report=xml
+
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install audit tools
+        run: python -m pip install --upgrade pip bandit pip-audit
+
+      # Audits the exact locked dependency set (requirements.lock.txt, hashed)
+      # that packaging and reproducible installs use; --no-deps audits each pin
+      # directly against PyPA/OSV advisories without re-resolving.
+      - name: Dependency audit (pip-audit)
+        run: pip-audit --strict --no-deps -r requirements.lock.txt
+
+      # Fails on any finding not explicitly skipped in [tool.bandit].
+      - name: Static analysis (bandit)
+        run: bandit -c pyproject.toml -r src/
