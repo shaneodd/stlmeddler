@@ -205,6 +205,38 @@ The GUI relies on **PyQt5** and **PyOpenGL**; ensure your system has the appropr
 - `mesa-libGL` (or equivalent for your distribution)
 - Proper GPU drivers (NVIDIA/AMD)
 
+## Security
+
+Project files (`.stlproj`) and mesh files are treated as untrusted input:
+loaders bound decompression and memory use up front (zip-bomb budgets, file
+size and vertex/triangle caps) and reject malformed bundles with a clear error
+instead of crashing.
+
+Dependencies are pinned in [requirements.lock.txt](requirements.lock.txt)
+(universal resolution + SHA-256 hashes). Use it for reproducible installs and
+for building distributables:
+
+```bash
+pip install -r requirements.lock.txt   # exact, hash-checked versions
+```
+
+Regenerate the lock after changing `requirements.txt` (requires
+[uv](https://docs.astral.sh/uv/)):
+
+```bash
+uv pip compile requirements.txt --python-version 3.12 --universal \
+    --generate-hashes -o requirements.lock.txt
+```
+
+Audits run automatically in CI (`.github/workflows/ci.yml`, `security` job).
+Locally:
+
+```bash
+pip install bandit pip-audit
+bandit -c pyproject.toml -r src/            # static analysis
+pip-audit --strict --no-deps -r requirements.lock.txt   # dependency CVEs
+```
+
 ## License
 
 Distributed under the MIT License. See [LICENSE](LICENSE) for details.

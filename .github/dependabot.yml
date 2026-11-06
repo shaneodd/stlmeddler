@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # Runtime + dev Python dependencies (requirements*.txt, pyproject.toml).
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: deps
+
+  # Keeps the SHA-pinned action refs in .github/workflows up to date.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
