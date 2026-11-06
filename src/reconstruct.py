@@ -32,6 +32,10 @@ DEFAULT_DRILL_DIAMETERS: tuple[float, ...] = (
     14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 22.0, 25.0,
 )
 
+# Snap-list JSON files are tiny by construction; cap untrusted imports so a
+# multi-gigabyte file cannot exhaust memory at read time (see SnapList.load).
+_MAX_SNAPLIST_BYTES = 1 * 1024 * 1024
+
 
 def _xyz(v: np.ndarray) -> tuple[float, float, float]:
     return (float(v[0]), float(v[1]), float(v[2]))
@@ -55,7 +59,15 @@ class SnapList:
     @classmethod
     def load(cls, path: str | Path) -> SnapList:
         """Read ``{"hole_diameters_mm": [...], "tolerance_mm": 0.15}`` from JSON."""
-        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        file = Path(path)
+        size = file.stat().st_size  # OSError propagates; the dialog reports it
+        if size > _MAX_SNAPLIST_BYTES:
+            raise ValueError(
+                f"Snap list is implausibly large ({size} bytes; limit {_MAX_SNAPLIST_BYTES})"
+            )
+        raw = json.loads(file.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError(f"Snap list JSON in {path} must be an object")
         diams = raw.get("hole_diameters_mm")
         tol = raw.get("tolerance_mm")
         if diams is not None:
