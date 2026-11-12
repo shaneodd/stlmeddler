@@ -50,6 +50,14 @@ class SceneObject(_SceneObjectRequired, total=False):
     render_arrays: tuple[np.ndarray, np.ndarray]
 
 
+# Budgets applied to untrusted .stlproj input; see SceneModel.load_project.
+# A project is a zip of small JSON + Nx3 float/int arrays, so anything beyond
+# these bounds indicates a malformed or hostile file (e.g. a zip bomb).
+_MAX_MANIFEST_BYTES = 1 * 1024 * 1024        # manifest.json is tiny by construction
+_MAX_PROJECT_OBJECTS = 10_000                # sanity cap on objects per project
+_MAX_PROJECT_MESH_BYTES = 512 * 1024 * 1024  # total decompressed mesh data (budget)
+
+
 def rotation_matrix(rx_deg: float, ry_deg: float, rz_deg: float) -> np.ndarray:
     """Return a 3x3 rotation matrix combining Rx, Ry, Rz (applied X then Y then Z)."""
     rx, ry, rz = np.radians([rx_deg, ry_deg, rz_deg])
@@ -674,29 +682,97 @@ class SceneModel:
 
     @classmethod
     def load_project(cls, path: str) -> SceneModel:
-        """Rebuild a :class:`SceneModel` from a ``.stlproj`` zip bundle."""
+        """Rebuild a :class:`SceneModel` from a ``.stlproj`` zip bundle.
+
+        Project files are untrusted input (they arrive via download or email),
+        so every read is bounded *before* it happens: the manifest must be small
+        and well-formed, object counts sane, and each mesh entry is checked
+        against its declared uncompressed size -- and a shared budget across all
+        entries -- before decompression. Python's zipfile stops reading at the
+        declared size, so a lying header cannot make ``zf.read`` return more
+        than :meth:`zipfile.ZipFile.getinfo` reported. Malformed or explosive
+        bundles raise ``ValueError`` instead of leaking ``KeyError`` /
+        ``MemoryError`` to the caller.
+        """
         model = cls()
         with zipfile.ZipFile(path, "r") as zf:
-            manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+            try:
+                raw_manifest = zf.read("manifest.json")
+            except KeyError as exc:
+                raise ValueError("Malformed project file: no manifest.json") from exc
+            if len(raw_manifest) > _MAX_MANIFEST_BYTES:
+                raise ValueError("Malformed project file: manifest is implausibly large")
+            try:
+                manifest = json.loads(raw_manifest.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError) as exc:  # JSONDecodeError subclasses ValueError
+                raise ValueError(f"Malformed project file: unreadable manifest ({exc})") from exc
+            if not isinstance(manifest, dict):
+                raise ValueError("Malformed project file: manifest is not a JSON object")
             if manifest.get("version") != 1:
                 raise ValueError(f"Unsupported project version: {manifest.get('version')!r}")
-            for entry in manifest["objects"]:
-                data = np.load(io.BytesIO(zf.read(entry["mesh"])), allow_pickle=False)
-                obj: SceneObject = {
-                    "verts": data["verts"],
-                    "tris": data["tris"],
-                    "name": entry["name"],
-                    "rot_x": float(entry.get("rot_x", 0.0)),
-                    "rot_y": float(entry.get("rot_y", 0.0)),
-                    "rot_z": float(entry.get("rot_z", 0.0)),
-                    "trans_x": float(entry.get("trans_x", 0.0)),
-                    "trans_y": float(entry.get("trans_y", 0.0)),
-                    "trans_z": float(entry.get("trans_z", 0.0)),
-                    "scale_x": float(entry.get("scale_x", 1.0)),
-                    "scale_y": float(entry.get("scale_y", 1.0)),
-                    "scale_z": float(entry.get("scale_z", 1.0)),
-                    "color": tuple(float(c) for c in entry["color"]),
-                }
+            entries = manifest.get("objects", [])
+            if not isinstance(entries, list):
+                raise ValueError("Malformed project file: 'objects' is not a list")
+            if len(entries) > _MAX_PROJECT_OBJECTS:
+                raise ValueError(
+                    f"Project has too many objects ({len(entries)}; limit {_MAX_PROJECT_OBJECTS})"
+                )
+
+            budget = _MAX_PROJECT_MESH_BYTES
+            for i, entry in enumerate(entries):
+                if not isinstance(entry, dict):
+                    raise ValueError(f"Malformed project file: object {i} is not a JSON object")
+                missing = {"name", "color", "mesh"} - set(entry)
+                if missing:
+                    keys = ", ".join(sorted(missing))
+                    raise ValueError(f"Malformed project file: object {i} missing key(s): {keys}")
+
+                # Zip-bomb defence: bound the declared uncompressed size against
+                # the shared budget before decompressing anything.
+                try:
+                    info = zf.getinfo(entry["mesh"])
+                except Exception as exc:  # KeyError, or non-str/unhashable arcname
+                    raise ValueError(
+                        f"Malformed project file: object {i} references an unreadable mesh part"
+                    ) from exc
+                if info.file_size > budget:
+                    raise ValueError(
+                        "Project file is too large once decompressed (limit "
+                        f"{_MAX_PROJECT_MESH_BYTES // 1024 // 1024} MiB)"
+                    )
+
+                try:
+                    data = np.load(io.BytesIO(zf.read(entry["mesh"])), allow_pickle=False)
+                    verts = np.asarray(data["verts"])
+                    tris = np.asarray(data["tris"])
+                    if (
+                        verts.ndim != 2 or verts.shape[1:] != (3,)
+                        or tris.ndim != 2 or tris.shape[1:] != (3,)
+                    ):
+                        raise ValueError("mesh arrays must be Nx3")
+                    color = tuple(float(c) for c in entry["color"])
+                    if len(color) != 3:
+                        raise ValueError("color must have 3 components")
+                    obj: SceneObject = {
+                        "verts": verts,
+                        "tris": tris,
+                        "name": str(entry["name"]),
+                        "rot_x": float(entry.get("rot_x", 0.0)),
+                        "rot_y": float(entry.get("rot_y", 0.0)),
+                        "rot_z": float(entry.get("rot_z", 0.0)),
+                        "trans_x": float(entry.get("trans_x", 0.0)),
+                        "trans_y": float(entry.get("trans_y", 0.0)),
+                        "trans_z": float(entry.get("trans_z", 0.0)),
+                        "scale_x": float(entry.get("scale_x", 1.0)),
+                        "scale_y": float(entry.get("scale_y", 1.0)),
+                        "scale_z": float(entry.get("scale_z", 1.0)),
+                        "color": color,
+                    }
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Malformed project file: object {i} is invalid ({exc})"
+                    ) from exc
+                budget -= info.file_size
                 model.objects.append(obj)
 
         n = len(model.objects)

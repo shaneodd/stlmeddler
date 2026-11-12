@@ -235,3 +235,29 @@ def test_feature_set_to_dict_round_trips_values():
     by_d = {h["diameter"]: h for h in data["holes"]}
     assert by_d[6.0]["is_through"] is True
     assert by_d[8.0]["is_through"] is False
+
+
+def test_snaplist_rejects_oversized_file(tmp_path, monkeypatch):
+    """Snap-list imports are size-capped before the file is read."""
+    import pytest
+
+    import src.reconstruct as rec
+    from src.reconstruct import SnapList
+
+    big = tmp_path / "big.json"
+    big.write_text('{"hole_diameters_mm": [3.2]}' + " " * 4096)
+    monkeypatch.setattr(rec, "_MAX_SNAPLIST_BYTES", 64)
+    with pytest.raises(ValueError, match="implausibly large"):
+        SnapList.load(big)
+
+
+def test_snaplist_rejects_non_object_json(tmp_path):
+    """A JSON array/string is rejected cleanly, not via AttributeError."""
+    import pytest
+
+    from src.reconstruct import SnapList
+
+    path = tmp_path / "list.json"
+    path.write_text("[1, 2, 3]")
+    with pytest.raises(ValueError, match="must be an object"):
+        SnapList.load(path)

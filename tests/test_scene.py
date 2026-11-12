@@ -820,3 +820,148 @@ def test_matrix_override_bake_clears_scale_on_save(tmp_path):
     obj = loaded.objects[0]
     assert (obj["scale_x"], obj["scale_y"], obj["scale_z"]) == (1.0, 1.0, 1.0)
     assert np.allclose(loaded.transformed_vertices(0)[:, 0].max(), 13.0)  # 3*2 + 7
+
+
+# --------------------------------------------------------------------- #
+# Untrusted project files (security hardening: malformed input + zip bombs)
+# --------------------------------------------------------------------- #
+def _write_raw_project(path, manifest_json, parts=None):
+    """Hand-build a .stlproj zip with arbitrary manifest bytes and mesh parts."""
+    import zipfile
+
+    with zipfile.ZipFile(path, "w") as zf:
+        if manifest_json is not None:
+            zf.writestr("manifest.json", manifest_json)
+        for name, blob in (parts or {}).items():
+            zf.writestr(name, blob)
+
+
+def _npz_blob(verts=None, tris=None):
+    import io
+
+    import numpy as np
+
+    buf = io.BytesIO()
+    np.savez(
+        buf,
+        verts=np.zeros((4, 3)) if verts is None else verts,
+        tris=np.array([[0, 1, 2]]) if tris is None else tris,
+    )
+    return buf.getvalue()
+
+
+def test_load_project_rejects_missing_manifest(tmp_path):
+    from src.gui.scene import SceneModel
+
+    path = tmp_path / "no_manifest.stlproj"
+    _write_raw_project(path, None)
+    with pytest.raises(ValueError, match="no manifest.json"):
+        SceneModel.load_project(str(path))
+
+
+def test_load_project_rejects_bad_json(tmp_path):
+    from src.gui.scene import SceneModel
+
+    path = tmp_path / "bad_json.stlproj"
+    _write_raw_project(path, "{not json")
+    with pytest.raises(ValueError, match="unreadable manifest"):
+        SceneModel.load_project(str(path))
+
+
+def test_load_project_rejects_non_dict_manifest(tmp_path):
+    from src.gui.scene import SceneModel
+
+    path = tmp_path / "list_manifest.stlproj"
+    _write_raw_project(path, "[1, 2, 3]")
+    with pytest.raises(ValueError, match="not a JSON object"):
+        SceneModel.load_project(str(path))
+
+
+def test_load_project_rejects_non_list_objects(tmp_path):
+    from src.gui.scene import SceneModel
+
+    path = tmp_path / "bad_objects.stlproj"
+    _write_raw_project(path, '{"version": 1, "objects": "nope"}')
+    with pytest.raises(ValueError, match="'objects' is not a list"):
+        SceneModel.load_project(str(path))
+
+
+def test_load_project_rejects_entry_missing_keys(tmp_path):
+    """Regression: raw KeyError leaked from the manifest loop (PoC A)."""
+    from src.gui.scene import SceneModel
+
+    path = tmp_path / "missing_key.stlproj"
+    _write_raw_project(path, '{"version": 1, "objects": [{"name": "x"}]}')
+    with pytest.raises(ValueError, match="missing key"):
+        SceneModel.load_project(str(path))
+
+
+def test_load_project_rejects_missing_mesh_part(tmp_path):
+    from src.gui.scene import SceneModel
+
+    path = tmp_path / "missing_part.stlproj"
+    _write_raw_project(
+        path, '{"version": 1, "objects": [{"name": "x", "color": [1, 0, 0], "mesh": "gone.npz"}]}'
+    )
+    with pytest.raises(ValueError, match="unreadable mesh part"):
+        SceneModel.load_project(str(path))
+
+
+def test_load_project_rejects_garbage_mesh_bytes(tmp_path):
+    from src.gui.scene import SceneModel
+
+    path = tmp_path / "garbage_part.stlproj"
+    _write_raw_project(
+        path,
+        '{"version": 1, "objects": [{"name": "x", "color": [1, 0, 0], "mesh": "p.npz"}]}',
+        parts={"p.npz": b"definitely not an npz"},
+    )
+    with pytest.raises(ValueError, match="is invalid"):
+        SceneModel.load_project(str(path))
+
+
+def test_load_project_rejects_non_nx3_arrays(tmp_path):
+    from src.gui.scene import SceneModel
+
+    path = tmp_path / "bad_shape.stlproj"
+    _write_raw_project(
+        path,
+        '{"version": 1, "objects": [{"name": "x", "color": [1, 0, 0], "mesh": "p.npz"}]}',
+        parts={"p.npz": _npz_blob(verts=np.zeros((4, 2)))},
+    )
+    with pytest.raises(ValueError, match="Nx3"):
+        SceneModel.load_project(str(path))
+
+
+def test_load_project_rejects_bad_color_length(tmp_path):
+    from src.gui.scene import SceneModel
+
+    path = tmp_path / "bad_color.stlproj"
+    _write_raw_project(
+        path,
+        '{"version": 1, "objects": [{"name": "x", "color": [1, 0], "mesh": "p.npz"}]}',
+        parts={"p.npz": _npz_blob()},
+    )
+    with pytest.raises(ValueError, match="3 components"):
+        SceneModel.load_project(str(path))
+
+
+def test_load_project_rejects_zip_bomb_budget(tmp_path, monkeypatch):
+    """Regression: a small file could decompress without limit (PoC B).
+
+    Instead of writing 512 MiB of zeros in the test, shrink the budget so an
+    ordinary project exceeds it; the check happens on the *declared* size
+    before any decompression.
+    """
+    import src.gui.scene as scene_mod
+    from src.gui.scene import SceneModel
+    from src.mesh_ops import create_primitive
+
+    path = tmp_path / "bomb.stlproj"
+    m = SceneModel()
+    m.add_object(create_primitive("cube"), name="A")
+    m.save_project(str(path))
+
+    monkeypatch.setattr(scene_mod, "_MAX_PROJECT_MESH_BYTES", 64)
+    with pytest.raises(ValueError, match="too large"):
+        SceneModel.load_project(str(path))

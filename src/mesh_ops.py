@@ -76,14 +76,39 @@ def _as_volume(
         )
     return tri
 
+# Budgets for untrusted files handed to load_mesh; see its docstring.
+_MAX_MESH_FILE_BYTES = 1024 * 1024 * 1024   # 1 GiB on disk (binary STL is ~50 B/tri)
+_MAX_MESH_VERTICES = 5_000_000              # generous vs. real scans (~1e6), bounds DoS
+_MAX_MESH_TRIANGLES = 10_000_000
+
 def load_mesh(file_path: str) -> TriangleMesh:
     """Load a mesh from STL or OBJ using Open3D.
-    Returns an Open3D TriangleMesh object.
+
+    Returns an Open3D TriangleMesh object. The file is untrusted input, so it
+    is bounded twice: on disk before parsing (a multi-gigabyte file would be
+    swallowed whole by the native reader) and on vertex/triangle counts after
+    (huge meshes wedge rendering and boolean ops in C++ code that cannot be
+    interrupted). Both limits sit far above any realistic scan.
     """
+    try:
+        size = Path(file_path).stat().st_size
+    except OSError as e:
+        raise ValueError(f"Failed to load mesh from {file_path}: {e}") from e
+    if size > _MAX_MESH_FILE_BYTES:
+        raise ValueError(
+            f"Mesh file is too large ({size / 2**20:.0f} MiB; limit "
+            f"{_MAX_MESH_FILE_BYTES // 2**20} MiB)"
+        )
     o3d = _load_open3d()
     mesh = o3d.io.read_triangle_mesh(file_path)
     if not mesh.has_vertices():
         raise ValueError(f"Failed to load mesh from {file_path}")
+    n_verts, n_tris = len(mesh.vertices), len(mesh.triangles)
+    if n_verts > _MAX_MESH_VERTICES or n_tris > _MAX_MESH_TRIANGLES:
+        raise ValueError(
+            f"Mesh is too large ({n_verts:,} vertices / {n_tris:,} triangles; limits "
+            f"{_MAX_MESH_VERTICES:,} / {_MAX_MESH_TRIANGLES:,})"
+        )
     return mesh
 
 def save_mesh(mesh: TriangleMesh, file_path: str) -> None:

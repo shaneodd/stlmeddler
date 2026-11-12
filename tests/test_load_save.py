@@ -55,3 +55,23 @@ def test_load_mesh_cube_fixture_is_valid():
 
     mesh = load_mesh(str(FIXTURES_DIR / "test_cube.stl"))
     assert mesh_health(mesh).ok
+
+
+def test_load_mesh_rejects_oversized_file(tmp_path, monkeypatch):
+    """Files beyond the on-disk budget are refused before parsing."""
+    from src import mesh_ops
+
+    big = tmp_path / "big.stl"
+    big.write_bytes(b"\0" * 2048)
+    monkeypatch.setattr(mesh_ops, "_MAX_MESH_FILE_BYTES", 1024)
+    with pytest.raises(ValueError, match="too large"):
+        mesh_ops.load_mesh(str(big))
+
+
+def test_load_mesh_rejects_too_many_vertices(tmp_path, monkeypatch):
+    """Parsed meshes beyond the vertex budget are refused."""
+    from src import mesh_ops
+
+    monkeypatch.setattr(mesh_ops, "_MAX_MESH_VERTICES", 2)
+    with pytest.raises(ValueError, match="too large"):
+        mesh_ops.load_mesh(str(FIXTURES_DIR / "test_cube.stl"))

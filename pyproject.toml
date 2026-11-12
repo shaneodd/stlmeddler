@@ -69,3 +69,10 @@ disallow_untyped_defs = true
 [[tool.mypy.overrides]]
 module = ["src.gui.viewer", "src.gui.window", "src.gui.primitive_dialog", "src.gui.review_dialog"]
 ignore_errors = true
+
+# Security linting (bandit -c pyproject.toml -r src/). B110/B112 (try/except
+# pass or continue) are deliberate best-effort patterns here: optional GUI
+# hints and winding-repair fallbacks that must never abort the caller.
+[tool.bandit]
+exclude_dirs = ["tests", "venv", "test_venv"]
+skips = ["B110", "B112"]
