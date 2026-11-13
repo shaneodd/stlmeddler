@@ -11,5 +11,5 @@ mypy>=1.11
 pytest-cov>=5.0
 
 # Security auditing (see .github/workflows/ci.yml 'security' job)
-bandit>=1.7
+bandit>=1.9.4
 pip-audit>=2.7
