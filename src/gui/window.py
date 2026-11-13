@@ -27,6 +27,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from .busy import run_busy
 from .viewer import MeshViewer
 
 
@@ -353,8 +354,12 @@ class MainWindow(QMainWindow):
 
         obj = self.viewer.get_objects()[self.viewer.active_index]
         try:
-            report = mesh_health(
-                SimpleNamespace(vertices=obj["verts"], triangles=obj["tris"])
+            report = run_busy(
+                self,
+                "Checking mesh health\u2026",
+                lambda: mesh_health(
+                    SimpleNamespace(vertices=obj["verts"], triangles=obj["tris"])
+                ),
             )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Health check failed: {e}")
@@ -384,9 +389,56 @@ class MainWindow(QMainWindow):
             )
         else:
             detail = "\n".join(f"- {p}" for p in report.problems)
-            QMessageBox.warning(
+            answer = QMessageBox.question(
                 self, f"Mesh Health - {obj['name']}",
-                "This mesh has problems:\n" + detail + "\n\n" + body,
+                "This mesh has problems:\n" + detail + "\n\n" + body
+                + "\n\nAttempt automatic repair?\n"
+                  "(Welds vertices, removes degenerate/duplicate faces and caps holes;\n"
+                  "self-intersections between existing faces need manual editing.)",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer == QMessageBox.Yes:
+                self._repair_active_object(obj)
+
+    def _repair_active_object(self, obj) -> None:
+        """Run repair_mesh on an object and replace its geometry in place."""
+        from types import SimpleNamespace
+
+        from src.mesh_ops import mesh_health, repair_mesh
+
+        try:
+            def _work():
+                repaired = repair_mesh(
+                    SimpleNamespace(vertices=obj["verts"], triangles=obj["tris"])
+                )
+                return repaired, mesh_health(repaired)
+
+            repaired, after = run_busy(self, "Repairing mesh\u2026", _work)
+        except Exception as e:
+            QMessageBox.critical(self, "Repair failed", f"Automatic repair failed: {e}")
+            return
+        if after.ok:
+            # Replace geometry in place; transforms live on separate keys so the
+            # object keeps its position/rotation/scale. Drop the render cache so
+            # the viewer rebuilds its vertex arrays from the new mesh.
+            obj["verts"] = np.asarray(repaired.vertices).copy()
+            obj["tris"] = np.asarray(repaired.triangles).copy()
+            obj.pop("render_arrays", None)
+            self.viewer.update()
+            QMessageBox.information(
+                self, f"Repair complete - {obj['name']}",
+                "The mesh was repaired successfully.\n\n"
+                f"Watertight: yes   Pieces: {after.components}   "
+                f"Volume: {after.volume:.3f}\n\n"
+                "Save the file to keep the fixed version.",
+            )
+        else:
+            remaining = "\n".join(f"- {p}" for p in after.problems)
+            QMessageBox.warning(
+                self, f"Repair incomplete - {obj['name']}",
+                "The mesh was left unchanged; automatic repair could not fix:\n"
+                + remaining,
             )
 
     # ------------------------------------------------------------------ #
@@ -398,7 +450,9 @@ class MainWindow(QMainWindow):
             return
         try:
             from src.mesh_ops import is_watertight, load_mesh
-            mesh = load_mesh(path)
+            mesh = run_busy(
+                self, f"Loading {Path(path).name}\u2026", lambda: load_mesh(path)
+            )
             name = self._unique_name(Path(path).stem)
             idx = self.viewer.add_object(mesh, name=name)
             self._refresh_object_list(select_name=self.viewer.get_objects()[idx]["name"])
@@ -463,7 +517,9 @@ class MainWindow(QMainWindow):
         try:
             from src.step_ops import mesh_to_step
 
-            result = mesh_to_step(verts, faces, path)
+            result = run_busy(
+                self, "Exporting STEP\u2026", lambda: mesh_to_step(verts, faces, path)
+            )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to export STEP: {e}")
             return
@@ -638,10 +694,14 @@ class MainWindow(QMainWindow):
         if not ok or not other_name:
             return
         try:
-            result_name = self.viewer.boolean_active_with(
-                self.viewer.get_index(other_name), kind
+            other_index = self.viewer.get_index(other_name)
+            result_name = run_busy(
+                self,
+                f"Running {title}\u2026",
+                lambda: self.viewer.scene.boolean_active_with(other_index, kind),
             )
             if result_name is not None:
+                self.viewer.refresh_after_model_change()
                 self._refresh_object_list(select_name=result_name)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"{title} operation failed: {e}")
@@ -661,7 +721,12 @@ class MainWindow(QMainWindow):
             return
         z_height = self.cut_z_spin.value()
         try:
-            added = self.viewer.cut_active_at_z(z_height)
+            added = run_busy(
+                self,
+                f"Cutting mesh at Z={z_height}\u2026",
+                lambda: self.viewer.scene.cut_active_at_z(z_height),
+            )
+            self.viewer.refresh_after_model_change()
             select = added[0] if added else None
             self._refresh_object_list(select_name=select)
             if added:
