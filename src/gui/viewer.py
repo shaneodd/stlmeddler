@@ -382,6 +382,13 @@ class MeshViewer(QOpenGLWidget):
             self.update()
         return name
 
+    def refresh_after_model_change(self) -> None:
+        """Re-frame and repaint after ``self.scene`` was mutated elsewhere
+        (e.g. by a background thread inside :func:`src.gui.busy.run_busy`)."""
+        self._fit_view()
+        self.active_changed.emit(self.scene.active_index)
+        self.update()
+
     # ------------------------------------------------------------------ #
     # Geometry helpers for export / framing
     # ------------------------------------------------------------------ #

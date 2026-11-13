@@ -58,6 +58,13 @@ def _load_trimesh() -> ModuleType:
     except ImportError as e:
         raise RuntimeError("trimesh is required for mesh operations") from e
 
+def _load_mapbox_earcut() -> ModuleType:
+    try:
+        import mapbox_earcut
+        return mapbox_earcut
+    except ImportError as e:
+        raise RuntimeError("mapbox-earcut is required to fill mesh holes") from e
+
 def _as_volume(
     trimesh_module: ModuleType, vertices: np.ndarray, faces: np.ndarray
 ) -> Any:
@@ -445,3 +452,204 @@ def mesh_health(mesh: Any, check_self_intersections: bool | None = None) -> Mesh
         duplicate_faces=duplicate_faces,
         volume=volume,
     )
+
+
+# ---------------------------------------------------------------------- #
+# Repair
+# ---------------------------------------------------------------------- #
+
+def _boundary_loops(verts: np.ndarray, faces: np.ndarray) -> list[list[int]]:
+    """Closed vertex loops around the open edges of a welded face array.
+
+    Boundary edges - those used by exactly one face - form an undirected graph in
+    which every vertex has degree 2, except where several holes touch each other
+    at a single corner (a common scan/boolean artifact; beanpod STLs have two
+    holes sharing one vertex). With no branch vertices each component is already
+    one closed loop. Otherwise the graph is split into paths between branch
+    vertices and greedily rejoined by directional continuity, so touching holes
+    are capped separately instead of as one tangled ring. Loops that cannot be
+    closed (e.g. dangling edges) are dropped rather than producing bad caps.
+
+    ``faces`` must already have welded (shared) vertex indices.
+    """
+    if len(faces) == 0:
+        return []
+    edges = np.sort(np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]), axis=1)
+    uniq, counts = np.unique(edges, axis=0, return_counts=True)
+    boundary = uniq[counts == 1]
+    if len(boundary) == 0:
+        return []
+
+    adjacency: dict[int, list[int]] = {}
+    for a, b in boundary:
+        adjacency.setdefault(int(a), []).append(int(b))
+        adjacency.setdefault(int(b), []).append(int(a))
+
+    def edge_key(x: int, y: int) -> tuple[int, int]:
+        return (x, y) if x < y else (y, x)
+
+    remaining = {edge_key(int(a), int(b)) for a, b in boundary}
+    branch = {v for v, nbrs in adjacency.items() if len(nbrs) != 2}
+
+    def walk(start: int, first: int) -> tuple[list[int], bool]:
+        """Follow unused edges from ``start``, stopping at any branch vertex.
+
+        Returns the visited path and whether it closed back onto ``start``; a
+        closed walk is already a complete loop, an open one runs between two
+        branch vertices (possibly the same pair) and needs rejoining.
+        """
+        path = [start]
+        prev, cur = start, first
+        while True:
+            remaining.discard(edge_key(prev, cur))
+            path.append(cur)
+            if cur == start or cur in branch:
+                return path, cur == start
+            nxts = [n for n in adjacency[cur] if edge_key(cur, n) in remaining and n != prev]
+            if not nxts:  # dangling chain end; cannot be capped cleanly
+                return path, False
+            prev, cur = cur, nxts[0]
+
+    loops: list[list[int]] = []
+    if not branch:
+        # Every component is a simple cycle: walk it closed.
+        for start in adjacency:
+            if not any(edge_key(start, n) in remaining for n in adjacency[start]):
+                continue
+            path, closed = walk(start, adjacency[start][0])
+            if closed and len(path) > 2:
+                loops.append(path[:-1])  # drop the repeated start vertex
+        return loops
+
+    # Split into maximal paths between branch vertices. A walk that closes back
+    # onto its own branch vertex (two holes touching at one corner, as in the
+    # beanpod samples) is already a complete loop; open runs are joined below.
+    paths: list[list[int]] = []
+    for b in sorted(branch):
+        for nb in adjacency[b]:
+            if edge_key(b, nb) not in remaining:
+                continue
+            path, closed = walk(b, nb)
+            if closed and len(path) > 2:
+                loops.append(path[:-1])
+            elif not closed and len(path) >= 2:
+                paths.append(path)
+
+    # ...then rejoin them into closed loops. At each branch vertex the next path
+    # is chosen to best preserve travel direction (max dot product of edge vectors).
+    used = [False] * len(paths)
+    for i, path in enumerate(paths):
+        if used[i]:
+            continue
+        used[i] = True
+        loop = list(path)
+        while not (len(loop) > 2 and loop[0] == loop[-1]):
+            end = loop[-1]
+            best: tuple[float, int, list[int]] | None = None
+            for j, other in enumerate(paths):
+                if used[j]:
+                    continue
+                if other[0] == end:
+                    continuation = other[1:]
+                elif other[-1] == end:
+                    continuation = other[-2::-1]
+                else:
+                    continue
+                if not continuation or len(loop) < 2:
+                    continue
+                d_in = verts[end] - verts[loop[-2]]
+                d_out = verts[continuation[0]] - verts[end]
+                n_in, n_out = float(np.linalg.norm(d_in)), float(np.linalg.norm(d_out))
+                score = 0.0
+                if n_in > 0 and n_out > 0:
+                    score = float(np.dot(d_in, d_out) / (n_in * n_out))
+                if best is None or score > best[0]:
+                    best = (score, j, continuation)
+            if best is None:
+                break
+            _, j, continuation = best
+            used[j] = True
+            loop.extend(continuation)
+        if len(loop) > 2 and loop[0] == loop[-1]:
+            loops.append(loop[:-1])
+    return loops
+
+
+def _fill_loop(verts: np.ndarray, loop: list[int]) -> np.ndarray:
+    """Triangulate one boundary loop as a flat cap; returns new faces (may be empty).
+
+    The loop is projected onto its best-fit plane (SVD) and ear-clipped with
+    mapbox-earcut. Loops that project to a degenerate polygon yield no faces.
+    """
+    if len(loop) < 3:
+        return np.empty((0, 3), dtype=np.int64)
+    points = verts[loop]
+    centroid = points.mean(axis=0)
+    _, _, vt = np.linalg.svd(points - centroid)
+    basis = vt[:2].T  # 3x2: projects the 3-D loop points onto the plane's axes
+    uv = (points - centroid) @ basis
+    earcut = _load_mapbox_earcut()
+    ring_ends = np.array([len(loop)], dtype=np.uint32)  # single outer ring, no holes
+    triangles = np.asarray(earcut.triangulate_float64(np.ascontiguousarray(uv), ring_ends))
+    if len(triangles) == 0:
+        return np.empty((0, 3), dtype=np.int64)
+    return np.asarray(loop, dtype=np.int64)[triangles.reshape(-1, 3)]
+
+
+def repair_mesh(mesh: MeshLike) -> TriangleMesh:
+    """Repair a mesh so it becomes a watertight printable volume.
+
+    Welds duplicate vertices, drops degenerate (zero-area) and duplicated faces,
+    caps every boundary hole with an ear-clipped flat patch, and normalises face
+    winding so the enclosed volume is positive. Existing triangles are never
+    moved - repair only removes unusable faces and adds cap faces - so a valid
+    mesh passes through geometrically unchanged.
+
+    Returns a new Open3D TriangleMesh; the input is not modified. Self-
+    intersections between pre-existing triangles cannot be fixed without moving
+    geometry, so they are left for manual editing (see :func:`mesh_health`).
+    """
+    o3d = _load_open3d()
+    trimesh_mod = _load_trimesh()
+
+    verts = np.asarray(mesh.vertices, dtype=np.float64).reshape(-1, 3)
+    faces = np.asarray(mesh.triangles, dtype=np.int64).reshape(-1, 3)
+
+    if len(verts) and len(faces):
+        # Weld duplicate vertices (STL files store per-face copies) so topology
+        # analysis sees shared edges. Same path as mesh_health/is_watertight.
+        welded = trimesh_mod.Trimesh(vertices=verts, faces=faces, process=False)
+        welded.merge_vertices()
+        verts = np.asarray(welded.vertices, dtype=np.float64).copy()
+        faces = np.asarray(welded.faces, dtype=np.int64).copy()
+
+        # Drop zero-area faces (they poison winding repair and boolean engines).
+        v0, v1, v2 = verts[faces[:, 0]], verts[faces[:, 1]], verts[faces[:, 2]]
+        areas_ok = np.linalg.norm(np.cross(v1 - v0, v2 - v0), axis=1) >= 1e-12
+        faces = faces[areas_ok]
+        # Drop duplicated faces: after welding they share vertex indices, so keep
+        # one of each. The surface stays closed because the surviving copy remains.
+        if len(faces):
+            _, first_of_group = np.unique(np.sort(faces, axis=1), axis=0, return_index=True)
+            faces = faces[np.sort(first_of_group)]
+
+        caps = [_fill_loop(verts, lp) for lp in _boundary_loops(verts, faces)]
+        cap_faces = [c for c in caps if len(c)]
+        if cap_faces:
+            faces = np.vstack([faces, *cap_faces])
+
+        # Consistent outward winding; then a divergence-theorem volume sign check
+        # so an inverted shell is flipped even when the repair helpers abstain.
+        if len(faces):
+            result = trimesh_mod.Trimesh(vertices=verts, faces=faces, process=False)
+            trimesh_mod.repair.fix_normals(result)
+            faces = np.asarray(result.faces, dtype=np.int64).copy()
+            v0, v1, v2 = verts[faces[:, 0]], verts[faces[:, 1]], verts[faces[:, 2]]
+            signed_volume = float(np.einsum("ij,ij->i", v0, np.cross(v1 - v0, v2 - v0)).sum() / 6.0)
+            if signed_volume < 0.0:
+                faces = faces[:, ::-1]
+
+    out = o3d.geometry.TriangleMesh()
+    out.vertices = o3d.utility.Vector3dVector(verts)
+    out.triangles = o3d.utility.Vector3iVector(faces.astype(np.uint32))
+    return out
