@@ -430,9 +430,9 @@ itsdangerous==2.2.0 \
     --hash=sha256:c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef \
     --hash=sha256:e0050c0b7da1eea53ffaf149c0cfbb5c6e2e2b69c4bef22c81fa6eb73e5f6173
     # via flask
-janus==2.0.0 \
-    --hash=sha256:0970f38e0e725400496c834a368a67ee551dc3b5ad0a257e132f5b46f2e77770 \
-    --hash=sha256:7e6449d34eab04cd016befbd7d8c0d8acaaaab67cb59e076a69149f9031745f9
+janus==2.1.1 \
+    --hash=sha256:911e2bbca194922540265eacdbae3ce048a47df0c7e6cfa043b7e5fb61cbdfde \
+    --hash=sha256:da6197870a8c634fed91698b5fd9725c33b83cb693baabf264320d7773e53659
     # via dash
 jedi==0.20.1 \
     --hash=sha256:0fb16d86c4a4c73c37ba518c77419975e30fcc620658a8d14fbb5720cdd34142 \
