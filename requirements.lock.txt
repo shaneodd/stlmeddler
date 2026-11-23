@@ -237,9 +237,9 @@ comm==0.2.3 \
     # via
     #   dash
     #   ipywidgets
-configargparse==1.9.0 \
-    --hash=sha256:48d9c22affe4ac419b4dd0691fa929d759e1f99574be41826785f2dbf3da63a5 \
-    --hash=sha256:e4ecc54d821ca97c43e6152403f40e158aff79d809c3447746fa92b136dc1e31
+configargparse==1.10.2 \
+    --hash=sha256:2deb0b3d6d46ff6e3218fcd350127507c5e3c11e21c8072a9fb24531dfc9bd4a \
+    --hash=sha256:926e28ca8262f066dfeb6585e227a78f01bd3d7f3fb63fad1c8045c5da1401ac
     # via open3d
 contourpy==1.4.0 \
     --hash=sha256:018227e134b73090b06f911e773a526c77c9af426be29065500ce096a5accd4c \
